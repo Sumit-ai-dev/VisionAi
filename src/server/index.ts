@@ -5,7 +5,7 @@ import { createRealtimeAnswer } from "./realtimeSession";
 import { getSceneDescription } from "./vision";
 
 const app = express();
-app.use(express.json({ limit: "10mb" }));
+app.use(express.json({ limit: "25mb" }));
 
 app.post("/api/realtime/offer", async (req, res) => {
   try {
@@ -25,11 +25,14 @@ app.post("/api/realtime/offer", async (req, res) => {
 
 app.post("/api/vision", async (req, res) => {
   try {
-    const { image_base64_jpeg } = req.body as { image_base64_jpeg?: string };
+    const { image_base64_jpeg, mode } = req.body as {
+      image_base64_jpeg?: string;
+      mode?: "scene" | "ahead" | "read_text";
+    };
     if (!image_base64_jpeg) {
       return res.status(400).json({ error: "Missing image data" });
     }
-    const result = await getSceneDescription(image_base64_jpeg);
+    const result = await getSceneDescription(image_base64_jpeg, mode ?? "scene");
     return res.json(result);
   } catch (error) {
     return res.status(500).json({ error: String(error) });

@@ -60,6 +60,19 @@ section {
   color: #9aa4bf;
 }
 
+.status-meta {
+  margin-top: 10px;
+  font-size: 0.9rem;
+  color: #c3ccdf;
+  display: grid;
+  gap: 6px;
+}
+
+.status-meta .label {
+  color: #9aa4bf;
+  margin-right: 6px;
+}
+
 .reset-button {
   margin-top: 14px;
   padding: 10px 16px;
