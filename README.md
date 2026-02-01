@@ -41,6 +41,22 @@ Open http://localhost:3000 in Chrome.
 4. When the assistant responds, say **"capture and describe"**.
 5. Listen for the spoken hazard/object summary.
 
+## Smart-glasses adapter layer (Division 3)
+- Camera and audio are routed through adapters to keep the core flow unchanged.
+- External camera simulation can be toggled in the UI (Camera source: External).
+- Audio routing uses system defaults so Bluetooth glasses/headsets work automatically.
+
+## Post-division check
+```bash
+npm run checkup
+```
+
+## Forcing the external camera adapter
+- UI: Use **Camera source → External (fixture)** in the Audio/Device Debug panel.
+- Env: Set `VITE_CAMERA_SOURCE=external` before running `npm run dev`.
+
+See `docs/ADAPTERS.md` for adapter extension guidance.
+
 ## Notes
 - Only `OPENAI_API_KEY` is used server-side.
 - The client never embeds the API key.

@@ -137,3 +137,39 @@ video {
   padding: 6px 0;
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 }
+
+.device-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.device-grid {
+  display: grid;
+  gap: 8px;
+  font-size: 0.9rem;
+  color: #c3ccdf;
+}
+
+.device-grid .label {
+  color: #9aa4bf;
+  margin-right: 6px;
+}
+
+.device-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.device-row select {
+  background: #0f1425;
+  color: #f6f7fb;
+  border: 1px solid #283153;
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+
+.remote-audio {
+  display: none;
+}
