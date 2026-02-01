@@ -1,0 +1,10 @@
+<svg width="1280" height="720" viewBox="0 0 1280 720" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1280" height="720" fill="#0B0F1A"/>
+  <rect x="120" y="120" width="1040" height="480" rx="32" fill="#141A2B" stroke="#1E2740" stroke-width="6"/>
+  <circle cx="240" cy="240" r="48" fill="#2EA043"/>
+  <circle cx="1040" cy="240" r="48" fill="#F2B54B"/>
+  <path d="M320 360H960" stroke="#9AA4BF" stroke-width="6" stroke-linecap="round"/>
+  <path d="M320 420H880" stroke="#9AA4BF" stroke-width="6" stroke-linecap="round"/>
+  <text x="320" y="520" font-family="Inter, system-ui, sans-serif" font-size="40" fill="#F6F7FB">External Camera Fixture</text>
+  <text x="320" y="570" font-family="Inter, system-ui, sans-serif" font-size="26" fill="#9AA4BF">Used when CAMERA_SOURCE=external</text>
+</svg>
