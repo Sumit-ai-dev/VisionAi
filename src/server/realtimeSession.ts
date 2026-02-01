@@ -31,8 +31,9 @@ export const createRealtimeAnswer = async (offerSdp: string) => {
       return parsed.sdp;
     }
   } catch {
-    // non-JSON SDP response
+    
   }
 
   return responseText;
 };
+
