@@ -1,6 +1,10 @@
 import OpenAI from "openai";
 import { OPENAI_API_KEY, VISION_MODEL } from "./config";
-import { VISION_PROMPT } from "./visionPrompt";
+import {
+  AHEAD_PROMPT_JSON,
+  OCR_PROMPT_JSON,
+  SCENE_PROMPT_JSON
+} from "./prompts/visionPrompts";
 
 export type SceneDescription = {
   hazards: Array<{
@@ -20,6 +24,8 @@ export type SceneDescription = {
   };
   short_speech: string;
 };
+
+export type VisionMode = "scene" | "ahead" | "read_text";
 
 const CLOCK_VALUES = new Set(
   ["12", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"].map(
@@ -302,7 +308,8 @@ const requestVision = async (imageBase64: string, prompt: string) => {
 };
 
 export const getSceneDescription = async (
-  imageBase64: string
+  imageBase64: string,
+  mode: VisionMode
 ): Promise<SceneDescription> => {
   if (!OPENAI_API_KEY) {
     console.error("[Vision] Missing API key");
@@ -310,7 +317,13 @@ export const getSceneDescription = async (
   }
 
   try {
-    const raw = await requestVision(imageBase64, VISION_PROMPT);
+    const prompt =
+      mode === "ahead"
+        ? AHEAD_PROMPT_JSON
+        : mode === "read_text"
+          ? OCR_PROMPT_JSON
+          : SCENE_PROMPT_JSON;
+    const raw = await requestVision(imageBase64, prompt);
     console.log("[Vision] Raw response length:", raw.length);
     try {
       const parsed = JSON.parse(raw) as unknown;
@@ -328,7 +341,7 @@ export const getSceneDescription = async (
       console.error("[Vision] JSON parse error:", e);
     }
 
-    const retryPrompt = `${VISION_PROMPT}\n\nFix JSON to match schema; output JSON only.`;
+    const retryPrompt = `${prompt}\n\nFix JSON to match schema; output JSON only.`;
     const retryRaw = await requestVision(imageBase64, retryPrompt);
     try {
       const parsed = JSON.parse(retryRaw) as unknown;

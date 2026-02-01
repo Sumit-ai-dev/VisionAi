@@ -1,5 +1,7 @@
 import { captureJpegBase64, setupCamera } from "./camera";
-import { isCaptureCommand, isWakePhrase } from "../core/commandRouter";
+import { formatForSpeech } from "../core/formatForSpeech";
+import { routeIntent } from "../core/intentRouter";
+import { IntentType, VisionMode } from "../core/intents";
 import { StateMachine } from "../core/stateMachine";
 
 const statusText = document.getElementById("statusText") as HTMLElement;
@@ -10,6 +12,11 @@ const cameraPreview = document.getElementById("cameraPreview") as HTMLVideoEleme
 const cameraWarning = document.getElementById("cameraWarning") as HTMLElement;
 const captureButton = document.getElementById("captureButton") as HTMLButtonElement;
 const resetButton = document.getElementById("resetButton") as HTMLButtonElement;
+const intentText = document.getElementById("intentText") as HTMLElement;
+const modeText = document.getElementById("modeText") as HTMLElement;
+const wakeCountdownText = document.getElementById(
+  "wakeCountdownText"
+) as HTMLElement;
 
 // Create audio element for OpenAI's voice output
 const remoteAudio = document.createElement("audio");
@@ -37,6 +44,9 @@ stateMachine.onChange((next) => {
     ERROR: "Error"
   };
   statusText.textContent = mapping[next];
+  if (next !== "WAKE_DETECTED") {
+    wakeCountdownText.textContent = "—";
+  }
 });
 
 let peerConnection: RTCPeerConnection | null = null;
@@ -44,6 +54,42 @@ let dataChannel: RTCDataChannel | null = null;
 let transcriptBuffer = "";
 let wakeTimeout: number | null = null;
 let speechTimeout: number | null = null;
+let wakeCountdownInterval: number | null = null;
+let wakeExpiresAt = 0;
+let currentMode: VisionMode = "scene";
+let audioUnlocked = false;
+
+const audioContext = new AudioContext();
+
+const unlockAudio = async (reason: string) => {
+  if (audioUnlocked) {
+    return;
+  }
+  try {
+    if (audioContext.state === "suspended") {
+      await audioContext.resume();
+    }
+    await remoteAudio.play();
+    audioUnlocked = true;
+    appendLog(`Audio unlocked (${reason})`);
+  } catch (error) {
+    appendLog(`Audio unlock failed (${reason}): ${String(error)}`);
+  }
+};
+
+const bindAudioUnlock = () => {
+  const handler = () => {
+    unlockAudio("user-gesture").catch(() => undefined);
+    document.removeEventListener("click", handler);
+    document.removeEventListener("keydown", handler);
+    captureButton.removeEventListener("click", handler);
+    resetButton.removeEventListener("click", handler);
+  };
+  document.addEventListener("click", handler);
+  document.addEventListener("keydown", handler);
+  captureButton.addEventListener("click", handler);
+  resetButton.addEventListener("click", handler);
+};
 
 const sendRealtimeEvent = (payload: Record<string, unknown>) => {
   if (!dataChannel || dataChannel.readyState !== "open") {
@@ -51,6 +97,16 @@ const sendRealtimeEvent = (payload: Record<string, unknown>) => {
     return;
   }
   dataChannel.send(JSON.stringify(payload));
+};
+
+const formatModeLabel = (mode: VisionMode) => {
+  if (mode === "ahead") {
+    return "Ahead";
+  }
+  if (mode === "read_text") {
+    return "Read";
+  }
+  return "Scene";
 };
 
 const handleTranscript = (text: string, isFinal: boolean) => {
@@ -64,7 +120,10 @@ const handleTranscript = (text: string, isFinal: boolean) => {
   }
   appendLog(`Transcript final: ${cleaned}`);
 
-  if (stateMachine.state === "IDLE_LISTENING" && isWakePhrase(cleaned)) {
+  const intentResult = routeIntent(cleaned, stateMachine.state === "WAKE_DETECTED");
+  intentText.textContent = intentResult.intent;
+
+  if (intentResult.intent === IntentType.WAKE) {
     stateMachine.transition("WAKE_DETECTED", "Wake phrase detected");
     sendRealtimeEvent({
       type: "response.create",
@@ -74,27 +133,89 @@ const handleTranscript = (text: string, isFinal: boolean) => {
         voice: "alloy"
       }
     });
-    if (wakeTimeout) {
-      window.clearTimeout(wakeTimeout);
-    }
-    wakeTimeout = window.setTimeout(() => {
-      stateMachine.transition("IDLE_LISTENING", "Wake window expired");
-    }, 10000);
+    startWakeTimeout();
     return;
   }
 
-  if (stateMachine.state === "WAKE_DETECTED" && isCaptureCommand(cleaned)) {
-    if (wakeTimeout) {
-      window.clearTimeout(wakeTimeout);
-    }
-    captureAndDescribe().catch((error) => {
-      appendLog(`Capture error: ${String(error)}`);
-      stateMachine.transition("ERROR", "Capture failed");
-    });
+  if (intentResult.intent === IntentType.NONE) {
+    return;
   }
+
+  if (stateMachine.state !== "WAKE_DETECTED") {
+    if (!intentResult.wakeDetected) {
+      appendLog("Intent ignored (wake not active)");
+      return;
+    }
+    stateMachine.transition("WAKE_DETECTED", "Wake + command in one utterance");
+    startWakeTimeout();
+  }
+
+  if (wakeTimeout) {
+    window.clearTimeout(wakeTimeout);
+  }
+  if (wakeCountdownInterval) {
+    window.clearInterval(wakeCountdownInterval);
+  }
+  wakeCountdownText.textContent = "—";
+
+  if (intentResult.intent === IntentType.HELP) {
+    sendRealtimeEvent({
+      type: "response.create",
+      response: {
+        modalities: ["audio"],
+        instructions:
+          "You can say: what's ahead, describe scene, read this, or reset.",
+        voice: "alloy"
+      }
+    });
+    stateMachine.transition("SPEAKING", "Help requested");
+    return;
+  }
+
+  if (intentResult.intent === IntentType.RESET) {
+    resetSession().catch((error) => {
+      appendLog(`Reset error: ${String(error)}`);
+      stateMachine.transition("ERROR", "Reset failed");
+    });
+    return;
+  }
+
+  if (intentResult.slots.mode) {
+    currentMode = intentResult.slots.mode;
+  }
+  modeText.textContent = formatModeLabel(currentMode);
+  captureAndDescribe(currentMode).catch((error) => {
+    appendLog(`Capture error: ${String(error)}`);
+    stateMachine.transition("ERROR", "Capture failed");
+  });
 };
 
-const captureAndDescribe = async () => {
+const startWakeTimeout = () => {
+  if (wakeTimeout) {
+    window.clearTimeout(wakeTimeout);
+  }
+  if (wakeCountdownInterval) {
+    window.clearInterval(wakeCountdownInterval);
+  }
+  wakeExpiresAt = Date.now() + 8000;
+  wakeTimeout = window.setTimeout(() => {
+    stateMachine.transition("IDLE_LISTENING", "Wake window expired");
+    wakeCountdownText.textContent = "—";
+  }, 8000);
+  wakeCountdownInterval = window.setInterval(() => {
+    const remainingMs = wakeExpiresAt - Date.now();
+    if (remainingMs <= 0) {
+      wakeCountdownText.textContent = "0s";
+      if (wakeCountdownInterval) {
+        window.clearInterval(wakeCountdownInterval);
+      }
+      return;
+    }
+    wakeCountdownText.textContent = `${Math.ceil(remainingMs / 1000)}s`;
+  }, 250);
+};
+
+const captureAndDescribe = async (mode: VisionMode) => {
   stateMachine.transition("CAPTURING", "Capturing image");
   const imageBase64 = await captureJpegBase64(cameraPreview);
 
@@ -102,14 +223,15 @@ const captureAndDescribe = async () => {
   const response = await fetch("/api/vision", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ image_base64_jpeg: imageBase64 })
+    body: JSON.stringify({ image_base64_jpeg: imageBase64, mode })
   });
   if (!response.ok) {
     const errorText = await response.text();
-    appendLog(`Vision API error (${response.status}): ${errorText.substring(0, 100)}`);
+    appendLog(`Vision API error (${response.status}): ${errorText.substring(0, 200)}`);
     throw new Error(`Vision request failed: ${response.status}`);
   }
   const result = await response.json();
+  const speech = formatForSpeech(result, mode);
 
   stateMachine.transition("SPEAKING", "Speaking response");
   if (speechTimeout) {
@@ -122,8 +244,8 @@ const captureAndDescribe = async () => {
   }, 12000);
 
   // Display what the AI is "saying" (for Free Tier users without audio)
-  transcriptText.textContent = `🤖 AI: ${result.short_speech}`;
-  appendLog(`AI Description: ${result.short_speech.substring(0, 50)}...`);
+  transcriptText.textContent = `🤖 AI: ${speech}`;
+  appendLog(`AI Description: ${speech.substring(0, 80)}...`);
 
   // Add the AI's message to the conversation
   sendRealtimeEvent({
@@ -134,7 +256,7 @@ const captureAndDescribe = async () => {
       content: [
         {
           type: "text",
-          text: result.short_speech
+          text: speech
         }
       ]
     }
@@ -161,6 +283,7 @@ const setupRealtime = async () => {
       sampleRate: 24000
     }
   });
+  unlockAudio("mic-permission").catch(() => undefined);
   const audioTracks = micStream.getAudioTracks();
   appendLog(`Audio tracks: ${audioTracks.length}`);
   if (audioTracks.length === 0) {
@@ -191,7 +314,7 @@ const setupRealtime = async () => {
       session: {
         modalities: ["audio", "text"],
         instructions:
-          "You are a voice assistant. Stay silent until asked. When asked to speak, respond concisely.",
+          "You are VisionAI Nexus. Stay silent until the wake phrase 'Hey Nexus' is detected. After wake, interpret the user's intent (scene, ahead, read text, help, reset). If vision is requested, call get_scene_description with the mode and image. Speak only the formatted short speech in 1-2 sentences, safety-first.",
         voice: "alloy",
         input_audio_transcription: {
           model: "whisper-1"
@@ -204,9 +327,13 @@ const setupRealtime = async () => {
             parameters: {
               type: "object",
               properties: {
-                image_base64_jpeg: { type: "string" }
+                image_base64_jpeg: { type: "string" },
+                mode: {
+                  type: "string",
+                  enum: ["scene", "ahead", "read_text"]
+                }
               },
-              required: ["image_base64_jpeg"]
+              required: ["image_base64_jpeg", "mode"]
             }
           }
         ]
@@ -278,10 +405,20 @@ const resetSession = async () => {
   if (wakeTimeout) {
     window.clearTimeout(wakeTimeout);
   }
+  if (wakeCountdownInterval) {
+    window.clearInterval(wakeCountdownInterval);
+  }
+  wakeCountdownText.textContent = "—";
+  currentMode = "scene";
+  intentText.textContent = IntentType.NONE;
+  modeText.textContent = formatModeLabel(currentMode);
   await setupRealtime();
 };
 
 const init = async () => {
+  bindAudioUnlock();
+  intentText.textContent = IntentType.NONE;
+  modeText.textContent = formatModeLabel(currentMode);
   try {
     await setupCamera(cameraPreview);
   } catch (error) {
@@ -307,7 +444,7 @@ resetButton.addEventListener("click", () => {
 
 captureButton.addEventListener("click", () => {
   appendLog("Manual capture triggered");
-  captureAndDescribe().catch((error) => {
+  captureAndDescribe(currentMode).catch((error) => {
     appendLog(`Capture error: ${String(error)}`);
     stateMachine.transition("ERROR", "Capture failed");
   });
