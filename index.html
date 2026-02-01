@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VisionAI Nexus</title>
+    <link rel="stylesheet" href="/src/client/styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header>
+        <h1>VisionAI Nexus</h1>
+        <p class="subtitle">Voice-first hazard awareness demo</p>
+      </header>
+      <main>
+        <section class="status-card">
+          <h2>Status</h2>
+          <div id="statusText" class="status-text">Listening</div>
+          <div id="stateText" class="state-text">IDLE_LISTENING</div>
+          <button id="resetButton" class="reset-button">Reset session</button>
+        </section>
+        <section class="video-card">
+          <h2>Camera Preview</h2>
+          <video id="cameraPreview" autoplay playsinline muted></video>
+          <div id="cameraWarning" class="camera-warning"></div>
+        </section>
+        <section class="transcript-card">
+          <h2>Transcript</h2>
+          <div id="transcriptText" class="transcript-text">Waiting for audio...</div>
+        </section>
+        <section class="debug-card">
+          <h2>Debug Log</h2>
+          <ul id="debugLog" class="debug-log"></ul>
+        </section>
+      </main>
+    </div>
+    <script type="module" src="/src/client/main.ts"></script>
+  </body>
+</html>
