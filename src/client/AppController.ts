@@ -1,8 +1,18 @@
 import { AudioAdapter } from "../adapters/audio/AudioAdapter";
 import { CameraManager, CameraSourcePreference } from "../adapters/camera/CameraManager";
 import { ControlAdapter } from "../adapters/control/ControlAdapter";
-import { formatForSpeech } from "../core/formatForSpeech";
+import { AwarenessController } from "../core/awarenessController";
+import {
+  AwarenessConfig,
+  clampAwarenessInterval,
+  createAwarenessConfig
+} from "../core/awarenessConfig";
+import { ChangeDetector } from "../core/changeDetector";
+import { formatForSpeech, SceneDescription } from "../core/formatForSpeech";
 import { IntentType, VisionMode } from "../core/intents";
+import { RateLimiter } from "../core/rateLimiter";
+import { SpeechPriority } from "../core/priorityQueue";
+import { SpeechManager } from "../core/speechManager";
 import { StateMachine } from "../core/stateMachine";
 
 export type AppControllerElements = {
@@ -23,6 +33,17 @@ export type AppControllerElements = {
   outputSupportText: HTMLElement;
   cameraSourceSelect: HTMLSelectElement;
   cameraAdapterText: HTMLElement;
+  awarenessToggle: HTMLInputElement;
+  awarenessInterval: HTMLInputElement;
+  awarenessIntervalValue: HTMLElement;
+  awarenessModeSelect: HTMLSelectElement;
+  lastSpokenReason: HTMLElement;
+  lastVisionTimestamp: HTMLElement;
+};
+
+export type LogStore = {
+  entries: string[];
+  add: (message: string) => void;
 };
 
 type AppControllerOptions = {
@@ -32,6 +53,7 @@ type AppControllerOptions = {
   controlAdapter: ControlAdapter;
   remoteAudio: HTMLAudioElement;
   elements: AppControllerElements;
+  logStore: LogStore;
 };
 
 export class AppController {
@@ -41,6 +63,7 @@ export class AppController {
   private controlAdapter: ControlAdapter;
   private remoteAudio: HTMLAudioElement;
   private elements: AppControllerElements;
+  private logStore: LogStore;
   private peerConnection: RTCPeerConnection | null = null;
   private dataChannel: RTCDataChannel | null = null;
   private transcriptBuffer = "";
@@ -50,6 +73,11 @@ export class AppController {
   private wakeExpiresAt = 0;
   private currentMode: VisionMode = "scene";
   private audioUnlocked = false;
+  private awarenessConfig: AwarenessConfig = createAwarenessConfig();
+  private awarenessController: AwarenessController;
+  private changeDetector = new ChangeDetector(3);
+  private rateLimiter = new RateLimiter();
+  private speechManager: SpeechManager;
 
   constructor(options: AppControllerOptions) {
     this.stateMachine = options.stateMachine;
@@ -58,6 +86,26 @@ export class AppController {
     this.controlAdapter = options.controlAdapter;
     this.remoteAudio = options.remoteAudio;
     this.elements = options.elements;
+    this.logStore = options.logStore;
+
+    this.awarenessController = new AwarenessController(
+      this.awarenessConfig,
+      async (context) => {
+        this.appendLog(
+          `Awareness tick ${context.tickId} (${context.mode}, ${context.intervalMs}ms)`
+        );
+        await this.captureAndDescribe(context.mode, {
+          reason: "awareness",
+          allowSilent: true
+        });
+      }
+    );
+
+    this.speechManager = new SpeechManager({
+      send: (text) => this.sendSpeech(text),
+      cancel: () => this.cancelSpeech(),
+      onStart: (item) => this.handleSpeechStart(item.text, item.reason)
+    });
 
     this.stateMachine.onChange((next) => this.updateStatus(next));
 
@@ -87,6 +135,29 @@ export class AppController {
           this.appendLog(`Camera error: ${String(error)}`);
         });
     });
+
+    this.elements.awarenessToggle.addEventListener("change", () => {
+      if (this.elements.awarenessToggle.checked) {
+        this.startAwareness("toggle");
+      } else {
+        this.stopAwareness("toggle");
+      }
+    });
+
+    this.elements.awarenessInterval.addEventListener("input", () => {
+      const nextValue = clampAwarenessInterval(
+        Number(this.elements.awarenessInterval.value) * 1000
+      );
+      this.updateAwarenessConfig({ intervalMs: nextValue });
+    });
+
+    this.elements.awarenessModeSelect.addEventListener("change", () => {
+      const mode = this.elements.awarenessModeSelect
+        .value as AwarenessConfig["mode"];
+      this.updateAwarenessConfig({ mode });
+    });
+
+    this.updateAwarenessUI();
   }
 
   async start(): Promise<void> {
@@ -115,7 +186,7 @@ export class AppController {
 
   handleCapture(): void {
     this.appendLog("Manual capture triggered");
-    this.captureAndDescribe(this.currentMode).catch((error) => {
+    this.captureAndDescribe(this.currentMode, { reason: "manual", forceSpeak: true }).catch((error) => {
       this.appendLog(`Capture error: ${String(error)}`);
       this.stateMachine.transition("ERROR", "Capture failed");
     });
@@ -145,14 +216,7 @@ export class AppController {
   }
 
   private appendLog(message: string) {
-    const entry = document.createElement("li");
-    entry.textContent = `${new Date().toLocaleTimeString()} - ${message}`;
-    this.elements.debugLog.prepend(entry);
-    while (this.elements.debugLog.children.length > 20) {
-      this.elements.debugLog.removeChild(
-        this.elements.debugLog.lastChild as Node
-      );
-    }
+    this.logStore.add(message);
   }
 
   private bindAudioUnlock() {
@@ -199,6 +263,79 @@ export class AppController {
       return "Read";
     }
     return "Scene";
+  }
+
+  private updateAwarenessUI() {
+    this.elements.awarenessInterval.value = String(
+      Math.round(this.awarenessConfig.intervalMs / 1000)
+    );
+    this.elements.awarenessIntervalValue.textContent = `${Math.round(
+      this.awarenessConfig.intervalMs / 1000
+    )}s`;
+    this.elements.awarenessModeSelect.value = this.awarenessConfig.mode;
+    this.elements.awarenessToggle.checked = this.awarenessConfig.enabled;
+  }
+
+  private updateAwarenessConfig(update: Partial<AwarenessConfig>) {
+    const nextInterval = update.intervalMs ?? this.awarenessConfig.intervalMs;
+    const clampedInterval = clampAwarenessInterval(nextInterval);
+    if (clampedInterval !== nextInterval) {
+      this.appendLog("Awareness interval out of range, clamped to limits.");
+    }
+    this.awarenessConfig = {
+      ...this.awarenessConfig,
+      ...update,
+      intervalMs: clampedInterval
+    };
+    this.awarenessController.updateConfig(this.awarenessConfig);
+    this.updateAwarenessUI();
+  }
+
+  private setLastSpokenReason(reason: string) {
+    this.elements.lastSpokenReason.textContent = reason;
+  }
+
+  private setLastVisionTimestamp(timestamp: Date) {
+    this.elements.lastVisionTimestamp.textContent = timestamp.toLocaleTimeString();
+  }
+
+  private startAwareness(source: "voice" | "toggle") {
+    if (this.awarenessController.isRunning()) {
+      return;
+    }
+    this.appendLog(`Awareness mode enabled (${source})`);
+    this.updateAwarenessConfig({ enabled: true });
+    this.awarenessController.start();
+    this.speechManager.speak(
+      "Awareness mode enabled. I will speak up for new hazards or meaningful changes.",
+      "NORMAL",
+      "manual request"
+    );
+  }
+
+  private stopAwareness(source: "voice" | "toggle") {
+    if (!this.awarenessController.isRunning()) {
+      return;
+    }
+    this.appendLog(`Awareness mode disabled (${source})`);
+    this.updateAwarenessConfig({ enabled: false });
+    this.awarenessController.stop();
+    this.stateMachine.transition("IDLE_LISTENING", "Awareness stopped");
+    this.speechManager.speak(
+      "Awareness mode stopped.",
+      "NORMAL",
+      "manual request"
+    );
+  }
+
+  private speakStatus() {
+    const modeLabel = this.formatModeLabel(this.currentMode);
+    const awarenessLabel = this.awarenessController.isRunning()
+      ? `on, ${this.awarenessConfig.mode} mode`
+      : "off";
+    const interval = Math.round(this.awarenessConfig.intervalMs / 1000);
+    const message = `Status: ${modeLabel} mode. Awareness is ${awarenessLabel} with a ${interval}-second interval.`;
+    this.speechManager.speak(message, "NORMAL", "manual request");
   }
 
   private handleTranscript(text: string, isFinal: boolean) {
@@ -252,16 +389,11 @@ export class AppController {
     this.elements.wakeCountdownText.textContent = "—";
 
     if (intentResult.intent === IntentType.HELP) {
-      this.sendRealtimeEvent({
-        type: "response.create",
-        response: {
-          modalities: ["audio"],
-          instructions:
-            "You can say: what's ahead, describe scene, read this, or reset.",
-          voice: "alloy"
-        }
-      });
-      this.stateMachine.transition("SPEAKING", "Help requested");
+      this.speechManager.speak(
+        "You can say: what's ahead, describe scene, read this, start awareness, stop awareness, status, or reset.",
+        "NORMAL",
+        "manual request"
+      );
       return;
     }
 
@@ -273,11 +405,32 @@ export class AppController {
       return;
     }
 
+    if (intentResult.intent === IntentType.START_AWARENESS) {
+      this.startAwareness("voice");
+      return;
+    }
+
+    if (intentResult.intent === IntentType.STOP_AWARENESS) {
+      this.stopAwareness("voice");
+      return;
+    }
+
+    if (intentResult.intent === IntentType.STATUS) {
+      this.speakStatus();
+      return;
+    }
+
     if (intentResult.slots.mode) {
       this.currentMode = intentResult.slots.mode;
     }
     this.elements.modeText.textContent = this.formatModeLabel(this.currentMode);
-    this.captureAndDescribe(this.currentMode).catch((error) => {
+    const manualOverride =
+      this.awarenessController.isRunning() &&
+      intentResult.intent === IntentType.DESCRIBE_SCENE;
+    const captureOptions = manualOverride
+      ? { reason: "manual" as const, forceSpeak: true }
+      : { reason: "manual" as const };
+    this.captureAndDescribe(this.currentMode, captureOptions).catch((error) => {
       this.appendLog(`Capture error: ${String(error)}`);
       this.stateMachine.transition("ERROR", "Capture failed");
     });
@@ -285,14 +438,7 @@ export class AppController {
 
   private handleWakeIntent() {
     this.stateMachine.transition("WAKE_DETECTED", "Wake phrase detected");
-    this.sendRealtimeEvent({
-      type: "response.create",
-      response: {
-        modalities: ["audio"],
-        instructions: "Yes?",
-        voice: "alloy"
-      }
-    });
+    this.speechManager.speak("Yes?", "NORMAL", "manual request");
     this.startWakeTimeout();
   }
 
@@ -323,26 +469,147 @@ export class AppController {
     }, 250);
   }
 
-  private async captureAndDescribe(mode: VisionMode) {
+  private async captureAndDescribe(
+    mode: VisionMode,
+    options: { reason: "manual" | "awareness"; forceSpeak?: boolean; allowSilent?: boolean }
+  ) {
     this.stateMachine.transition("CAPTURING", "Capturing image");
-    const imageBase64 = await this.cameraManager.captureJpegBase64();
+    const captureStart = performance.now();
+    let imageBase64 = "";
+    try {
+      imageBase64 = await this.cameraManager.captureJpegBase64();
+      const captureMs = Math.round(performance.now() - captureStart);
+      this.appendLog(`Capture success (${captureMs}ms)`);
+    } catch (error) {
+      this.appendLog(`Capture failure: ${String(error)}`);
+      this.handleFallbackSpeech("Sorry, I couldn't access the camera.");
+      this.stateMachine.transition("ERROR", "Capture failed");
+      return;
+    }
 
     this.stateMachine.transition("THINKING", "Sending image to server");
+    const requestStart = performance.now();
     const response = await fetch("/api/vision", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ image_base64_jpeg: imageBase64, mode })
     });
+    const requestMs = Math.round(performance.now() - requestStart);
+    this.appendLog(`Vision request ${requestMs}ms`);
     if (!response.ok) {
       const errorText = await response.text();
       this.appendLog(
         `Vision API error (${response.status}): ${errorText.substring(0, 200)}`
       );
-      throw new Error(`Vision request failed: ${response.status}`);
+      this.handleFallbackSpeech("Sorry, I couldn't analyze that. Please try again.");
+      this.stateMachine.transition("ERROR", "Vision request failed");
+      return;
     }
+
     const result = await response.json();
     const speech = formatForSpeech(result, mode);
+    const description = this.isValidDescription(result) ? result : null;
+    this.setLastVisionTimestamp(new Date());
+    if (options.reason === "awareness" && !this.awarenessController.isRunning()) {
+      this.appendLog("Awareness stopped; ignoring capture result");
+      this.stateMachine.transition("IDLE_LISTENING", "Awareness stopped");
+      return;
+    }
 
+    const forceSpeak = options.forceSpeak ?? options.reason === "manual";
+    const allowSilent = options.allowSilent ?? false;
+
+    if (!description) {
+      this.appendLog("Decision: invalid vision response");
+      if (forceSpeak) {
+        this.queueSpeech(speech, "NORMAL", "manual request");
+      } else if (!allowSilent) {
+        this.handleFallbackSpeech("Sorry, I couldn't understand the scene.");
+      } else {
+        this.stateMachine.transition("IDLE_LISTENING", "No valid vision data");
+      }
+      return;
+    }
+
+    const highestHazardPriority = this.getHighestHazardPriority(description);
+    const changeDecision = this.changeDetector.evaluate(description);
+    this.changeDetector.record(description);
+
+    if (options.reason === "awareness" && !forceSpeak) {
+      if (changeDecision.reason === "baseline") {
+        this.appendLog("Decision: baseline captured, no speech");
+        this.stateMachine.transition("IDLE_LISTENING", "Baseline captured");
+        return;
+      }
+      if (changeDecision.hazardChanged) {
+        const priority = changeDecision.hazardPriority ?? highestHazardPriority;
+        const decision = this.rateLimiter.shouldSpeak(priority, changeDecision.hazardKey);
+        if (!decision.allowed) {
+          this.appendLog(`Decision: ${decision.reason}`);
+          this.stateMachine.transition("IDLE_LISTENING", decision.reason);
+          return;
+        }
+        this.rateLimiter.recordSpeak(priority, changeDecision.hazardKey);
+        const reason =
+          priority === "CRITICAL" ? "CRITICAL hazard" : "hazard";
+        this.queueSpeech(speech, priority, reason);
+        this.appendLog(`Decision: spoke hazard (${priority})`);
+        return;
+      }
+      if (changeDecision.objectsChanged) {
+        const decision = this.rateLimiter.shouldSpeak("NORMAL");
+        if (!decision.allowed) {
+          this.appendLog(`Decision: ${decision.reason}`);
+          this.stateMachine.transition("IDLE_LISTENING", decision.reason);
+          return;
+        }
+        this.rateLimiter.recordSpeak("NORMAL");
+        this.queueSpeech(speech, "NORMAL", "change");
+        this.appendLog("Decision: spoke change update");
+        return;
+      }
+      this.appendLog("Decision: no change");
+      this.stateMachine.transition("IDLE_LISTENING", "No change");
+      return;
+    }
+
+    if (!forceSpeak) {
+      const decision = this.rateLimiter.shouldSpeak(highestHazardPriority);
+      if (!decision.allowed) {
+        this.appendLog(`Decision: ${decision.reason}`);
+        this.stateMachine.transition("IDLE_LISTENING", decision.reason);
+        return;
+      }
+      this.rateLimiter.recordSpeak(highestHazardPriority);
+    }
+    const hazardKey = this.getHazardKey(description);
+    const manualDecision = this.rateLimiter.shouldSpeak(
+      highestHazardPriority,
+      hazardKey
+    );
+    if (!manualDecision.allowed) {
+      this.appendLog(`Decision: ${manualDecision.reason}`);
+      this.stateMachine.transition("IDLE_LISTENING", manualDecision.reason);
+      return;
+    }
+    this.rateLimiter.recordSpeak(highestHazardPriority, hazardKey);
+    const manualReason =
+      highestHazardPriority === "CRITICAL"
+        ? "CRITICAL hazard"
+        : "manual request";
+    this.queueSpeech(speech, highestHazardPriority, manualReason);
+    this.appendLog("Decision: spoke manual request");
+  }
+
+  private queueSpeech(text: string, priority: SpeechPriority, reason: string) {
+    if (priority === "CRITICAL") {
+      this.speechManager.interruptAndSpeak(text, reason);
+      return;
+    }
+    this.speechManager.speak(text, priority, reason);
+  }
+
+  private handleSpeechStart(text: string, reason: string) {
     this.stateMachine.transition("SPEAKING", "Speaking response");
     if (this.speechTimeout) {
       window.clearTimeout(this.speechTimeout);
@@ -353,9 +620,12 @@ export class AppController {
       }
     }, 12000);
 
-    this.elements.transcriptText.textContent = `🤖 AI: ${speech}`;
-    this.appendLog(`AI Description: ${speech.substring(0, 80)}...`);
+    this.elements.transcriptText.textContent = `🤖 AI: ${text}`;
+    this.appendLog(`AI Description: ${text.substring(0, 80)}...`);
+    this.setLastSpokenReason(reason);
+  }
 
+  private sendSpeech(text: string) {
     this.sendRealtimeEvent({
       type: "conversation.item.create",
       item: {
@@ -364,7 +634,7 @@ export class AppController {
         content: [
           {
             type: "text",
-            text: speech
+            text
           }
         ]
       }
@@ -376,6 +646,54 @@ export class AppController {
         modalities: ["audio", "text"]
       }
     });
+  }
+
+  private cancelSpeech() {
+    this.appendLog("Speech interrupted");
+    this.sendRealtimeEvent({ type: "response.cancel" });
+  }
+
+  private handleFallbackSpeech(message: string) {
+    const decision = this.rateLimiter.shouldSpeak("NORMAL");
+    if (!decision.allowed) {
+      this.appendLog(`Decision: ${decision.reason}`);
+      return;
+    }
+    this.rateLimiter.recordSpeak("NORMAL");
+    this.queueSpeech(message, "NORMAL", "manual request");
+  }
+
+  private isValidDescription(value: unknown): value is SceneDescription {
+    if (!value || typeof value !== "object") {
+      return false;
+    }
+    const data = value as SceneDescription;
+    return (
+      Array.isArray(data.hazards) &&
+      Array.isArray(data.objects) &&
+      typeof data.environment === "object"
+    );
+  }
+
+  private getHighestHazardPriority(description: SceneDescription): SpeechPriority {
+    if (!description.hazards.length) {
+      return "NORMAL";
+    }
+    if (description.hazards.some((hazard) => hazard.urgency === "critical")) {
+      return "CRITICAL";
+    }
+    if (description.hazards.some((hazard) => hazard.urgency === "high")) {
+      return "HIGH";
+    }
+    return "NORMAL";
+  }
+
+  private getHazardKey(description: SceneDescription): string | undefined {
+    const hazard = description.hazards[0];
+    if (!hazard) {
+      return undefined;
+    }
+    return `${hazard.label.trim().toLowerCase()}|${hazard.clock}|${hazard.distance}`;
   }
 
   private async setupRealtime() {
@@ -417,7 +735,7 @@ export class AppController {
         session: {
           modalities: ["audio", "text"],
           instructions:
-            "You are VisionAI Nexus. Stay silent until the wake phrase 'Hey Nexus' is detected. After wake, interpret the user's intent (scene, ahead, read text, help, reset). If vision is requested, call get_scene_description with the mode and image. Speak only the formatted short speech in 1-2 sentences, safety-first.",
+            "You are VisionAI Nexus. Stay silent until the wake phrase 'Hey Nexus' is detected. After wake, interpret the user's intent (scene, ahead, read text, start awareness, stop awareness, status, help, reset). If vision is requested, call get_scene_description with the mode and image. Speak only the formatted short speech in 1-2 sentences, safety-first.",
           voice: "alloy",
           input_audio_transcription: {
             model: "whisper-1"
@@ -464,7 +782,8 @@ export class AppController {
           this.handleTranscript(userText, true);
         }
         if (type === "response.done") {
-          if (this.stateMachine.state === "SPEAKING") {
+          this.speechManager.handleSpeechDone();
+          if (!this.speechManager.isSpeaking()) {
             this.stateMachine.transition("IDLE_LISTENING", "Speech complete");
           }
           if (this.speechTimeout) {
@@ -511,9 +830,13 @@ export class AppController {
       window.clearInterval(this.wakeCountdownInterval);
     }
     this.elements.wakeCountdownText.textContent = "—";
+    this.awarenessController.stop();
+    this.updateAwarenessConfig({ enabled: false });
     this.currentMode = "scene";
     this.elements.intentText.textContent = IntentType.NONE;
     this.elements.modeText.textContent = this.formatModeLabel(this.currentMode);
+    this.elements.lastSpokenReason.textContent = "—";
+    this.elements.lastVisionTimestamp.textContent = "—";
     await this.setupRealtime();
   }
 

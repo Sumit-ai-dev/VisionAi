@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "lint": "node scripts/lint.mjs",
-    "checkup": "npm run lint && npm test && npm run build"
+    "typecheck": "tsc --noEmit",
+    "checkup": "npm run typecheck && npm run lint && npm test && npm run build && node scripts/smokeCheck.js"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

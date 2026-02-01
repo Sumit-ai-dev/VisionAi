@@ -34,7 +34,14 @@ const INTENT_PHRASES: Record<IntentType, string[]> = {
     "read text"
   ],
   [IntentType.HELP]: ["help", "what can i say", "help me"],
-  [IntentType.RESET]: ["reset", "start over", "restart session"]
+  [IntentType.RESET]: ["reset", "start over", "restart session"],
+  [IntentType.START_AWARENESS]: [
+    "start awareness",
+    "continuous mode",
+    "keep watching"
+  ],
+  [IntentType.STOP_AWARENESS]: ["stop awareness", "stop continuous"],
+  [IntentType.STATUS]: ["status", "what mode are we in"]
 };
 
 const normalize = (value: string) =>

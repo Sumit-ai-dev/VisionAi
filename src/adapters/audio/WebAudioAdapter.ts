@@ -48,8 +48,12 @@ export class WebAudioAdapter implements AudioAdapter {
       return [];
     }
     const devices = await this.mediaDevices.enumerateDevices();
+    const isAudioInput = (
+      device: MediaDeviceInfo
+    ): device is MediaDeviceInfo & { kind: "audioinput" } =>
+      device.kind === "audioinput";
     return devices
-      .filter((device) => device.kind === "audioinput")
+      .filter(isAudioInput)
       .map((device) => ({
         deviceId: device.deviceId,
         label: device.label,
@@ -63,8 +67,12 @@ export class WebAudioAdapter implements AudioAdapter {
       return [];
     }
     const devices = await this.mediaDevices.enumerateDevices();
+    const isAudioOutput = (
+      device: MediaDeviceInfo
+    ): device is MediaDeviceInfo & { kind: "audiooutput" } =>
+      device.kind === "audiooutput";
     return devices
-      .filter((device) => device.kind === "audiooutput")
+      .filter(isAudioOutput)
       .map((device) => ({
         deviceId: device.deviceId,
         label: device.label,
