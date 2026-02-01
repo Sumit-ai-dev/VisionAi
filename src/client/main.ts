@@ -204,6 +204,11 @@ const setupRealtime = async () => {
         handleTranscript(transcriptBuffer, true);
         transcriptBuffer = "";
       }
+      // Handle USER speech transcription (this is what we need for wake phrase!)
+      if (type === "conversation.item.input_audio_transcription.completed") {
+        const userText = message.transcript ?? "";
+        handleTranscript(userText, true);
+      }
       if (type === "response.done") {
         if (stateMachine.state === "SPEAKING") {
           stateMachine.transition("IDLE_LISTENING", "Speech complete");
