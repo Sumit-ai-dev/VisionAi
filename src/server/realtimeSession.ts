@@ -19,6 +19,10 @@ export const createRealtimeAnswer = async (offerSdp: string) => {
 
   const responseText = await response.text();
   if (!response.ok) {
+    console.error("[OpenAI Realtime API Error]");
+    console.error("Status:", response.status, response.statusText);
+    console.error("Response:", responseText);
+    console.error("API Key (first 20 chars):", OPENAI_API_KEY.substring(0, 20));
     throw new Error(`Realtime error: ${responseText}`);
   }
 

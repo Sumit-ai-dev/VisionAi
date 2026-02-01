@@ -42,17 +42,6 @@ const safeFallback = (): SceneDescription => ({
   short_speech: "Sorry, I couldn't analyze the scene. Please try again."
 });
 
-const getOutputText = (response: OpenAI.Responses.Response) => {
-  if (response.output_text) {
-    return response.output_text;
-  }
-  const chunks = response.output ?? [];
-  const text = chunks
-    .flatMap((item) => item.content ?? [])
-    .map((content) => ("text" in content ? content.text : ""))
-    .join("\n");
-  return text;
-};
 
 const isValidClock = (value: unknown): value is string =>
   typeof value === "string" && CLOCK_VALUES.has(value);
@@ -106,52 +95,66 @@ const validateSceneJson = (payload: unknown): payload is SceneDescription => {
 };
 
 const requestVision = async (imageBase64: string, prompt: string) => {
-  const response = await openai.responses.create({
+  const response = await openai.chat.completions.create({
     model: VISION_MODEL,
-    input: [
+    messages: [
       {
         role: "user",
         content: [
-          { type: "input_text", text: prompt },
+          { type: "text", text: prompt },
           {
-            type: "input_image",
-            image_url: `data:image/jpeg;base64,${imageBase64}`
+            type: "image_url",
+            image_url: {
+              url: `data:image/jpeg;base64,${imageBase64}`
+            }
           }
         ]
       }
     ],
     temperature: 0.2
   });
-  return getOutputText(response).trim();
+  return response.choices[0]?.message?.content?.trim() || "";
 };
 
 export const getSceneDescription = async (
   imageBase64: string
 ): Promise<SceneDescription> => {
   if (!OPENAI_API_KEY) {
+    console.error("[Vision] Missing API key");
     return safeFallback();
   }
 
-  const raw = await requestVision(imageBase64, VISION_PROMPT);
   try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (validateSceneJson(parsed)) {
-      return parsed;
+    const raw = await requestVision(imageBase64, VISION_PROMPT);
+    console.log("[Vision] Raw response length:", raw.length);
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (validateSceneJson(parsed)) {
+        console.log("[Vision] Validation passed");
+        return parsed;
+      }
+      console.log("[Vision] Validation failed, retrying");
+    } catch (e) {
+      console.error("[Vision] JSON parse error:", e);
     }
-  } catch {
-    // ignore parsing errors
-  }
 
-  const retryPrompt = `${VISION_PROMPT}\n\nFix JSON to match schema; output JSON only.`;
-  const retryRaw = await requestVision(imageBase64, retryPrompt);
-  try {
-    const parsed = JSON.parse(retryRaw) as unknown;
-    if (validateSceneJson(parsed)) {
-      return parsed;
+    const retryPrompt = `${VISION_PROMPT}\n\nFix JSON to match schema; output JSON only.`;
+    const retryRaw = await requestVision(imageBase64, retryPrompt);
+    try {
+      const parsed = JSON.parse(retryRaw) as unknown;
+      if (validateSceneJson(parsed)) {
+        console.log("[Vision] Retry validation passed");
+        return parsed;
+      }
+      console.log("[Vision] Retry validation failed");
+    } catch (e) {
+      console.error("[Vision] Retry JSON parse error:", e);
     }
-  } catch {
-    // ignore parsing errors
-  }
 
-  return safeFallback();
+    console.error("[Vision] Both attempts failed, returning fallback");
+    return safeFallback();
+  } catch (error) {
+    console.error("[Vision] Fatal error:", error);
+    return safeFallback();
+  }
 };

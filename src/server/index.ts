@@ -13,9 +13,12 @@ app.post("/api/realtime/offer", async (req, res) => {
     if (!sdp) {
       return res.status(400).json({ error: "Missing SDP" });
     }
+    console.log("[SDP Offer] Received from browser (first 200 chars):", sdp.substring(0, 200));
     const answer = await createRealtimeAnswer(sdp);
+    console.log("[SDP Answer] Received from OpenAI (first 200 chars):", answer.substring(0, 200));
     return res.json({ sdp: answer });
   } catch (error) {
+    console.error("[SDP Error]", error);
     return res.status(500).json({ error: String(error) });
   }
 });

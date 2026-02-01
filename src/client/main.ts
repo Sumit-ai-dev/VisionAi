@@ -8,7 +8,13 @@ const transcriptText = document.getElementById("transcriptText") as HTMLElement;
 const debugLog = document.getElementById("debugLog") as HTMLUListElement;
 const cameraPreview = document.getElementById("cameraPreview") as HTMLVideoElement;
 const cameraWarning = document.getElementById("cameraWarning") as HTMLElement;
+const captureButton = document.getElementById("captureButton") as HTMLButtonElement;
 const resetButton = document.getElementById("resetButton") as HTMLButtonElement;
+
+// Create audio element for OpenAI's voice output
+const remoteAudio = document.createElement("audio");
+remoteAudio.autoplay = true;
+document.body.appendChild(remoteAudio);
 
 const appendLog = (message: string) => {
   const entry = document.createElement("li");
@@ -93,21 +99,15 @@ const captureAndDescribe = async () => {
   const imageBase64 = await captureJpegBase64(cameraPreview);
 
   stateMachine.transition("THINKING", "Sending image to server");
-  sendRealtimeEvent({
-    type: "conversation.item.create",
-    item: {
-      type: "function_call",
-      name: "get_scene_description",
-      arguments: JSON.stringify({ image_base64_jpeg: imageBase64 })
-    }
-  });
   const response = await fetch("/api/vision", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ image_base64_jpeg: imageBase64 })
   });
   if (!response.ok) {
-    throw new Error("Vision request failed");
+    const errorText = await response.text();
+    appendLog(`Vision API error (${response.status}): ${errorText.substring(0, 100)}`);
+    throw new Error(`Vision request failed: ${response.status}`);
   }
   const result = await response.json();
 
@@ -120,20 +120,31 @@ const captureAndDescribe = async () => {
       stateMachine.transition("IDLE_LISTENING", "Speech timeout");
     }
   }, 12000);
+
+  // Display what the AI is "saying" (for Free Tier users without audio)
+  transcriptText.textContent = `🤖 AI: ${result.short_speech}`;
+  appendLog(`AI Description: ${result.short_speech.substring(0, 50)}...`);
+
+  // Add the AI's message to the conversation
   sendRealtimeEvent({
     type: "conversation.item.create",
     item: {
-      type: "function_call_output",
-      name: "get_scene_description",
-      output: JSON.stringify(result)
+      type: "message",
+      role: "assistant",
+      content: [
+        {
+          type: "text",
+          text: result.short_speech
+        }
+      ]
     }
   });
+
+  // Trigger audio response generation (requires Tier 1+)
   sendRealtimeEvent({
     type: "response.create",
     response: {
-      modalities: ["audio"],
-      instructions: result.short_speech,
-      voice: "alloy"
+      modalities: ["audio", "text"]
     }
   });
 };
@@ -158,6 +169,20 @@ const setupRealtime = async () => {
   micStream.getTracks().forEach((track) => {
     peerConnection?.addTrack(track, micStream);
   });
+
+  // Handle incoming audio from OpenAI (this plays the AI's voice!)
+  peerConnection.ontrack = (event) => {
+    appendLog(`Incoming audio track received (${event.streams.length} streams)`);
+    if (event.streams[0]) {
+      remoteAudio.srcObject = event.streams[0];
+      appendLog("Audio stream connected to audio element");
+      remoteAudio.play().then(() => {
+        appendLog("✅ Audio playback started successfully");
+      }).catch((error) => {
+        appendLog(`❌ Audio playback error: ${String(error)}`);
+      });
+    }
+  };
 
   dataChannel.onopen = () => {
     appendLog("Data channel open");
@@ -277,6 +302,14 @@ resetButton.addEventListener("click", () => {
   resetSession().catch((error) => {
     appendLog(`Reset error: ${String(error)}`);
     stateMachine.transition("ERROR", "Reset failed");
+  });
+});
+
+captureButton.addEventListener("click", () => {
+  appendLog("Manual capture triggered");
+  captureAndDescribe().catch((error) => {
+    appendLog(`Capture error: ${String(error)}`);
+    stateMachine.transition("ERROR", "Capture failed");
   });
 });
 
