@@ -42,7 +42,6 @@ const safeFallback = (): SceneDescription => ({
   short_speech: "Sorry, I couldn't analyze the scene. Please try again."
 });
 
-
 const isValidClock = (value: unknown): value is string =>
   typeof value === "string" && CLOCK_VALUES.has(value);
 
@@ -94,6 +93,192 @@ const validateSceneJson = (payload: unknown): payload is SceneDescription => {
   return hazardsValid && objectsValid && envValid;
 };
 
+const normalizeClock = (value: unknown): string | null => {
+  if (typeof value === "number" && Number.isInteger(value)) {
+    const hour = value === 0 ? 12 : value;
+    if (hour >= 1 && hour <= 12) {
+      return `${hour} o'clock`;
+    }
+  }
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value
+    .toLowerCase()
+    .replace("o’clock", "o'clock")
+    .replace("oclock", "o'clock")
+    .replace(/[^0-9o' ]/g, " ")
+    .trim();
+  const match = normalized.match(/\b(1[0-2]|[1-9])\b/);
+  if (!match) {
+    return null;
+  }
+  return `${match[1]} o'clock`;
+};
+
+const normalizeDistance = (value: unknown): "close" | "medium" | "far" | null => {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.toLowerCase();
+  if (["close", "near", "nearby", "short"].includes(normalized)) {
+    return "close";
+  }
+  if (["medium", "mid", "middle"].includes(normalized)) {
+    return "medium";
+  }
+  if (["far", "distant", "long"].includes(normalized)) {
+    return "far";
+  }
+  if (DISTANCE_VALUES.has(normalized)) {
+    return normalized as "close" | "medium" | "far";
+  }
+  return null;
+};
+
+const normalizeUrgency = (value: unknown): "critical" | "high" | "none" | null => {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.toLowerCase();
+  if (["critical", "urgent", "emergency"].includes(normalized)) {
+    return "critical";
+  }
+  if (["high", "medium", "moderate"].includes(normalized)) {
+    return "high";
+  }
+  if (["none", "low", "minor", "neutral"].includes(normalized)) {
+    return "none";
+  }
+  if (URGENCY_VALUES.has(normalized)) {
+    return normalized as "critical" | "high" | "none";
+  }
+  return null;
+};
+
+const normalizeIndoor = (value: unknown): "indoor" | "outdoor" | "unknown" => {
+  if (typeof value !== "string") {
+    return "unknown";
+  }
+  const normalized = value.toLowerCase();
+  if (normalized.includes("in")) {
+    return "indoor";
+  }
+  if (normalized.includes("out")) {
+    return "outdoor";
+  }
+  if (INDOOR_VALUES.has(normalized)) {
+    return normalized as "indoor" | "outdoor" | "unknown";
+  }
+  return "unknown";
+};
+
+const ensureArray = (value: unknown): unknown[] =>
+  Array.isArray(value) ? value : [];
+
+const coerceLabel = (value: unknown): string | null =>
+  typeof value === "string" && value.trim() ? value.trim() : null;
+
+const coerceSceneDescription = (payload: unknown): SceneDescription | null => {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const data = payload as Record<string, unknown>;
+  const hazardsRaw = ensureArray(
+    data.hazards ?? data.hazard ?? data.dangers ?? data.risks
+  );
+  const objectsRaw = ensureArray(
+    data.objects ?? data.items ?? data.obstacles ?? data.features
+  );
+  const environmentRaw = (data.environment ?? data.scene ?? data.setting) as
+    | Record<string, unknown>
+    | undefined;
+  const shortSpeechRaw =
+    data.short_speech ??
+    data.shortSpeech ??
+    data.summary ??
+    data.description ??
+    data.speech;
+
+  const hazards = hazardsRaw
+    .map((hazard) => {
+      if (!hazard || typeof hazard !== "object") {
+        return null;
+      }
+      const hazardRecord = hazard as Record<string, unknown>;
+      const label = coerceLabel(hazardRecord.label ?? hazardRecord.name);
+      const clock = normalizeClock(hazardRecord.clock ?? hazardRecord.position);
+      const distance = normalizeDistance(
+        hazardRecord.distance ?? hazardRecord.range
+      );
+      const urgency = normalizeUrgency(
+        hazardRecord.urgency ?? hazardRecord.level ?? hazardRecord.severity
+      );
+      if (!label || !clock || !distance || !urgency) {
+        return null;
+      }
+      return { label, clock, distance, urgency };
+    })
+    .filter((item): item is SceneDescription["hazards"][number] => !!item);
+
+  const objects = objectsRaw
+    .map((obj) => {
+      if (!obj || typeof obj !== "object") {
+        return null;
+      }
+      const objRecord = obj as Record<string, unknown>;
+      const label = coerceLabel(objRecord.label ?? objRecord.name);
+      const clock = normalizeClock(objRecord.clock ?? objRecord.position);
+      const distance = normalizeDistance(
+        objRecord.distance ?? objRecord.range
+      );
+      if (!label || !clock || !distance) {
+        return null;
+      }
+      return { label, clock, distance };
+    })
+    .filter((item): item is SceneDescription["objects"][number] => !!item);
+
+  const indoorOutdoor = normalizeIndoor(
+    environmentRaw?.indoor_outdoor ??
+      environmentRaw?.indoorOutdoor ??
+      environmentRaw?.indoor ??
+      environmentRaw?.outdoor
+  );
+  const context =
+    typeof environmentRaw?.context === "string" && environmentRaw.context.trim()
+      ? environmentRaw.context.trim()
+      : "unknown";
+
+  const shortSpeech =
+    typeof shortSpeechRaw === "string" && shortSpeechRaw.trim()
+      ? shortSpeechRaw.trim()
+      : "";
+
+  if (!hazards.length && !objects.length && !shortSpeech) {
+    return null;
+  }
+
+  return {
+    hazards,
+    objects,
+    environment: {
+      indoor_outdoor: indoorOutdoor,
+      context
+    },
+    short_speech: shortSpeech || safeFallback().short_speech
+  };
+};
+
+const extractJson = (raw: string): string | null => {
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) {
+    return null;
+  }
+  return raw.slice(start, end + 1);
+};
+
 const requestVision = async (imageBase64: string, prompt: string) => {
   const response = await openai.chat.completions.create({
     model: VISION_MODEL,
@@ -133,6 +318,11 @@ export const getSceneDescription = async (
         console.log("[Vision] Validation passed");
         return parsed;
       }
+      const coerced = coerceSceneDescription(parsed);
+      if (coerced) {
+        console.log("[Vision] Validation relaxed, using coerced response");
+        return coerced;
+      }
       console.log("[Vision] Validation failed, retrying");
     } catch (e) {
       console.error("[Vision] JSON parse error:", e);
@@ -145,6 +335,24 @@ export const getSceneDescription = async (
       if (validateSceneJson(parsed)) {
         console.log("[Vision] Retry validation passed");
         return parsed;
+      }
+      const coerced = coerceSceneDescription(parsed);
+      if (coerced) {
+        console.log("[Vision] Retry relaxed validation passed");
+        return coerced;
+      }
+      const extracted = extractJson(retryRaw);
+      if (extracted) {
+        const parsedExtracted = JSON.parse(extracted) as unknown;
+        if (validateSceneJson(parsedExtracted)) {
+          console.log("[Vision] Retry extracted JSON validation passed");
+          return parsedExtracted;
+        }
+        const coercedExtracted = coerceSceneDescription(parsedExtracted);
+        if (coercedExtracted) {
+          console.log("[Vision] Retry extracted JSON coerced");
+          return coercedExtracted;
+        }
       }
       console.log("[Vision] Retry validation failed");
     } catch (e) {
