@@ -1,0 +1,110 @@
+:root {
+  color-scheme: dark;
+  font-family: "Inter", system-ui, sans-serif;
+  background: #0b0f1a;
+  color: #f6f7fb;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+}
+
+#app {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 32px 24px 48px;
+}
+
+header {
+  margin-bottom: 24px;
+}
+
+h1 {
+  margin: 0 0 8px;
+  font-size: 2.4rem;
+}
+
+.subtitle {
+  margin: 0;
+  color: #9aa4bf;
+}
+
+main {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 20px;
+}
+
+section {
+  background: #141a2b;
+  border: 1px solid #1e2740;
+  border-radius: 16px;
+  padding: 20px;
+  min-height: 180px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.2);
+}
+
+.status-text {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin: 12px 0 6px;
+}
+
+.state-text {
+  font-size: 0.95rem;
+  color: #9aa4bf;
+}
+
+.reset-button {
+  margin-top: 14px;
+  padding: 10px 16px;
+  background: #1f6feb;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.reset-button:hover {
+  background: #388bfd;
+}
+
+video {
+  width: 100%;
+  border-radius: 12px;
+  background: #0a0f1a;
+}
+
+.camera-warning {
+  margin-top: 12px;
+  color: #f2b54b;
+  font-size: 0.9rem;
+}
+
+.transcript-text {
+  font-size: 1rem;
+  color: #e5e9f2;
+  min-height: 80px;
+  white-space: pre-wrap;
+}
+
+.debug-log {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 280px;
+  overflow: auto;
+  font-family: "SF Mono", ui-monospace, monospace;
+  font-size: 0.85rem;
+  color: #9aa4bf;
+}
+
+.debug-log li {
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
