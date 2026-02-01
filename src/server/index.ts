@@ -52,13 +52,11 @@ const startServer = async () => {
 
   const port = 3000;
   app.listen(port, () => {
-    // eslint-disable-next-line no-console
     console.log(`VisionAI Nexus running on http://localhost:${port}`);
   });
 };
 
 startServer().catch((error) => {
-  // eslint-disable-next-line no-console
   console.error(error);
   process.exit(1);
 });
