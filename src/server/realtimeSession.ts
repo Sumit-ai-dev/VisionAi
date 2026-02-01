@@ -20,11 +20,20 @@ export const createRealtimeAnswer = async (offerSdp: string) => {
     }
   );
 
+  const responseText = await response.text();
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Realtime error: ${errorText}`);
+    throw new Error(`Realtime error: ${responseText}`);
   }
 
-  const data = (await response.json()) as { sdp: string };
-  return data.sdp;
+  try {
+    const parsed = JSON.parse(responseText) as { sdp?: string };
+    if (parsed.sdp) {
+      return parsed.sdp;
+    }
+  } catch {
+    
+  }
+
+  return responseText;
 };
+
