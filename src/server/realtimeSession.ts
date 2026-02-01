@@ -11,12 +11,9 @@ export const createRealtimeAnswer = async (offerSdp: string) => {
       method: "POST",
       headers: {
         Authorization: `Bearer ${OPENAI_API_KEY}`,
-        "Content-Type": "application/json"
+        "Content-Type": "application/sdp"
       },
-      body: JSON.stringify({
-        sdp: offerSdp,
-        type: "offer"
-      })
+      body: offerSdp
     }
   );
 
@@ -31,7 +28,7 @@ export const createRealtimeAnswer = async (offerSdp: string) => {
       return parsed.sdp;
     }
   } catch {
-    
+
   }
 
   return responseText;
