@@ -73,6 +73,52 @@ section {
   margin-right: 6px;
 }
 
+.awareness-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  font-size: 0.9rem;
+  color: #c3ccdf;
+}
+
+.awareness-row .label,
+.awareness-meta .label {
+  color: #9aa4bf;
+}
+
+.awareness-row input[type="range"] {
+  flex: 1;
+}
+
+.awareness-row select {
+  background: #0f1425;
+  color: #f6f7fb;
+  border: 1px solid #283153;
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+
+.awareness-meta {
+  margin-top: 14px;
+  display: grid;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: #c3ccdf;
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.toggle input {
+  transform: scale(1.1);
+}
+
 .reset-button {
   margin-top: 14px;
   padding: 10px 16px;
@@ -101,6 +147,21 @@ section {
 
 .capture-button:hover {
   background: #2ea043;
+}
+
+.log-button {
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  background: #2f3b5f;
+  color: #f6f7fb;
+  border: 1px solid #3f4c74;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.log-button:hover {
+  background: #3b4a75;
 }
 
 video {

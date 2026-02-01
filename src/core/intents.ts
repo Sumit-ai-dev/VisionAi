@@ -5,7 +5,10 @@ export enum IntentType {
   AHEAD_ONLY = "AHEAD_ONLY",
   READ_TEXT = "READ_TEXT",
   HELP = "HELP",
-  RESET = "RESET"
+  RESET = "RESET",
+  START_AWARENESS = "START_AWARENESS",
+  STOP_AWARENESS = "STOP_AWARENESS",
+  STATUS = "STATUS"
 }
 
 export type VisionMode = "scene" | "ahead" | "read_text";

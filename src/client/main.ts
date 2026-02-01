@@ -27,6 +27,27 @@ const cameraSourceSelect = document.getElementById(
 const cameraAdapterText = document.getElementById(
   "cameraAdapterText"
 ) as HTMLElement;
+const awarenessToggle = document.getElementById(
+  "awarenessToggle"
+) as HTMLInputElement;
+const awarenessInterval = document.getElementById(
+  "awarenessInterval"
+) as HTMLInputElement;
+const awarenessIntervalValue = document.getElementById(
+  "awarenessIntervalValue"
+) as HTMLElement;
+const awarenessModeSelect = document.getElementById(
+  "awarenessModeSelect"
+) as HTMLSelectElement;
+const lastSpokenReason = document.getElementById(
+  "lastSpokenReason"
+) as HTMLElement;
+const lastVisionTimestamp = document.getElementById(
+  "lastVisionTimestamp"
+) as HTMLElement;
+const downloadLogsButton = document.getElementById(
+  "downloadLogsButton"
+) as HTMLButtonElement;
 
 const remoteAudio = document.createElement("audio");
 remoteAudio.autoplay = true;
@@ -34,13 +55,25 @@ remoteAudio.id = "remoteAudio";
 remoteAudio.className = "remote-audio";
 document.body.appendChild(remoteAudio);
 
-const stateMachine = new StateMachine("IDLE_LISTENING", (message) => {
-  const entry = document.createElement("li");
-  entry.textContent = `${new Date().toLocaleTimeString()} - ${message}`;
-  debugLog.prepend(entry);
-  while (debugLog.children.length > 20) {
-    debugLog.removeChild(debugLog.lastChild as Node);
+const logStore = {
+  entries: [] as string[],
+  add: (message: string) => {
+    const entryText = `${new Date().toLocaleTimeString()} - ${message}`;
+    logStore.entries.unshift(entryText);
+    if (logStore.entries.length > 200) {
+      logStore.entries.pop();
+    }
+    const entry = document.createElement("li");
+    entry.textContent = entryText;
+    debugLog.prepend(entry);
+    while (debugLog.children.length > 200) {
+      debugLog.removeChild(debugLog.lastChild as Node);
+    }
   }
+};
+
+const stateMachine = new StateMachine("IDLE_LISTENING", (message) => {
+  logStore.add(message);
 });
 
 const cameraManager = new CameraManager({
@@ -75,8 +108,15 @@ const controller = new AppController({
     audioUnlockText,
     outputSupportText,
     cameraSourceSelect,
-    cameraAdapterText
-  }
+    cameraAdapterText,
+    awarenessToggle,
+    awarenessInterval,
+    awarenessIntervalValue,
+    awarenessModeSelect,
+    lastSpokenReason,
+    lastVisionTimestamp
+  },
+  logStore
 });
 
 resetButton.addEventListener("click", () => {
@@ -88,10 +128,18 @@ captureButton.addEventListener("click", () => {
 });
 
 controller.start().catch((error) => {
-  const entry = document.createElement("li");
-  entry.textContent = `${new Date().toLocaleTimeString()} - Init error: ${String(
-    error
-  )}`;
-  debugLog.prepend(entry);
+  logStore.add(`Init error: ${String(error)}`);
   stateMachine.transition("ERROR", "Initialization failed");
+});
+
+downloadLogsButton.addEventListener("click", () => {
+  const blob = new Blob([logStore.entries.slice().reverse().join("\n")], {
+    type: "text/plain"
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = "visionai-nexus-logs.txt";
+  anchor.click();
+  URL.revokeObjectURL(url);
 });
