@@ -1,6 +1,6 @@
 # VisionAI Nexus (All Divisions)
 
-VisionAI Nexus is a voice-first, almost real-time navigation demo for low-vision awareness. Say the wake phrase, request a capture, and the app captures one camera frame, runs GPT-4o vision analysis, and speaks back concise hazards + key objects with clock positions and distance buckets.
+VisionAI Nexus is a voice-first, near real-time navigation demo for low-vision awareness. After a wake phrase, it captures a camera frame, sends it to GPT-4o vision analysis, and speaks back concise hazards + key objects with clock positions and distance buckets.
 
 ## What it does
 - Wake phrase gated: **"Hey Nexus"**
@@ -13,7 +13,7 @@ VisionAI Nexus is a voice-first, almost real-time navigation demo for low-vision
 - Node.js 18+
 - An OpenAI API key
 
-## Setup
+## How to run (exact commands)
 ```bash
 npm install
 ```
@@ -28,7 +28,6 @@ Add your OpenAI key to `.env`:
 OPENAI_API_KEY=sk-...
 ```
 
-## Run
 ```bash
 npm run dev
 ```
